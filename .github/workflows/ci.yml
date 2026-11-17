@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache: true
+
+      - name: formatting
+        run: make fmt-check
+
+      - name: vet
+        run: make vet
+
+      - name: build
+        run: make build
+
+      - name: tests
+        run: go test -race ./...
+
+      - name: policies
+        run: make policy-validate
+
+      # The accuracy gate: a change that lowers a detector's precision,
+      # recall, or false-positive rate below its threshold or more than the
+      # tolerance below the recorded baseline fails here.
+      - name: check accuracy
+        run: make eval-enforce
+
+      - name: accuracy report
+        if: always()
+        run: |
+          go run ./cmd/guardrails eval --format md --out eval/report.md
+          cat eval/report.md >> "$GITHUB_STEP_SUMMARY"

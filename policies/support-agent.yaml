@@ -1,0 +1,43 @@
+# The support agent answers from a knowledge base and cannot spend money, so
+# its policy is about what it says rather than what it does: groundedness runs
+# on every event here while its accuracy is being measured.
+agent: support-agent
+version: 1
+default_action: log
+
+rules:
+  - check: pii_leak
+    severity: high
+    action: redact
+
+  - check: secret_leak
+    severity: critical
+    action: block
+
+  - check: tool_allowlist
+    severity: high
+    action: alert
+    params:
+      allow: [search_kb, lookup_order, escalate_to_human]
+
+  - check: injection_direct
+    severity: medium
+    action: alert
+
+  - check: injection_indirect
+    severity: high
+    action: alert
+
+  - check: groundedness
+    severity: low
+    action: alert
+    notes: "Experimental: the judge's accuracy is not measured yet, so this only alerts."
+    params:
+      sample_rate: 1.0
+      min_overlap_to_skip: 0.75
+
+  - check: token_budget
+    severity: low
+    action: log
+    params:
+      max_session_tokens: 60000

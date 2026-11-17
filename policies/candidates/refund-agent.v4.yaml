@@ -1,0 +1,72 @@
+# Candidate policy, not loaded by the engine: files in this directory are what
+# `guardrails policy dry-run --policy ...` replays against past traffic.
+#
+# v4 tightens three things:
+#   - indirect injection moves from alert to require_human_approval
+#   - the refund bound drops from $500 to $200
+#   - a repeated tool call quarantines instead of alerting
+agent: refund-agent
+version: 4
+default_action: log
+
+disabled:
+  - groundedness
+
+rules:
+  - check: pii_leak
+    severity: critical
+    action: quarantine
+
+  - check: pii_prompt
+    severity: medium
+    action: redact
+    params:
+      types: [credit_card, ssn, iban, email, phone]
+
+  - check: secret_leak
+    severity: critical
+    action: block
+
+  - check: tool_allowlist
+    severity: high
+    action: block
+    params:
+      allow: [lookup_order, issue_refund, send_email, lookup_customer]
+
+  - check: tool_call_bounds
+    when: { tool: issue_refund, amount_gt: 200 }
+    severity: high
+    action: require_human_approval
+    params:
+      tools:
+        issue_refund:
+          required: [order_id, amount]
+          args:
+            amount: { max: 200, min: 0 }
+            currency: { one_of: [USD, EUR, GBP] }
+
+  - check: tool_call_from_injection
+    severity: critical
+    action: quarantine
+
+  - check: injection_indirect
+    severity: high
+    action: require_human_approval
+
+  - check: injection_direct
+    severity: medium
+    action: alert
+
+  - check: runaway_loop
+    severity: medium
+    action: quarantine
+    params:
+      max_turns: 30
+      repeat_threshold: 3
+
+  - check: token_budget
+    severity: medium
+    action: alert
+    params:
+      max_session_tokens: 120000
+      max_session_usd: 2.0

@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: cerberus
+    static_configs:
+      # `make run` serves the engine on the host; inside compose it is reached
+      # through the gateway alias.
+      - targets: ["host.docker.internal:8080"]
+
+  - job_name: nats
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["nats:8222"]

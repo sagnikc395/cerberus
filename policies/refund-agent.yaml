@@ -1,0 +1,78 @@
+# The refund agent can move money, so its policy is the strict one: anything
+# that leaves customer data or lets untrusted content drive a refund stops the
+# session, and a refund above the declared bound waits for a human.
+agent: refund-agent
+version: 3
+default_action: log
+
+# Groundedness is experimental and this agent does not answer from retrieved
+# documents, so it does not run here.
+disabled:
+  - groundedness
+
+rules:
+  - check: pii_leak
+    severity: critical
+    action: quarantine
+
+  - check: pii_prompt
+    severity: medium
+    action: redact
+    params:
+      types: [credit_card, ssn, iban, email, phone]
+
+  - check: secret_leak
+    severity: critical
+    action: block
+
+  - check: tool_allowlist
+    severity: high
+    action: block
+    params:
+      allow: [lookup_order, issue_refund, send_email, lookup_customer]
+
+  - check: tool_call_bounds
+    when: { tool: issue_refund, amount_gt: 500 }
+    severity: high
+    action: require_human_approval
+    notes: "Refunds over $500 are a person's decision, not the agent's."
+    params:
+      tools:
+        issue_refund:
+          required: [order_id, amount]
+          args:
+            amount: { max: 500, min: 0 }
+            currency: { one_of: [USD, EUR, GBP] }
+        send_email:
+          required: [to, body]
+          args:
+            body: { max_len: 4000 }
+
+  - check: tool_call_from_injection
+    severity: critical
+    action: quarantine
+    notes: "A tool call the retrieved content asked for is not the user's intent."
+
+  - check: injection_indirect
+    severity: high
+    action: alert
+
+  - check: injection_direct
+    severity: medium
+    action: alert
+    params:
+      threshold: 0.5
+
+  - check: runaway_loop
+    severity: low
+    action: alert
+    params:
+      max_turns: 40
+      repeat_threshold: 3
+
+  - check: token_budget
+    severity: medium
+    action: alert
+    params:
+      max_session_tokens: 120000
+      max_session_usd: 2.0
