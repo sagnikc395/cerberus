@@ -1,6 +1,9 @@
 # The infrastructure cerberus runs on: one broker, one database, and the
 # telemetry stack. The engine itself runs with `make run`, so the code under
 # development is the code being measured.
+#
+# Credentials come from .env when there is one (see .env.example); the defaults
+# below are what you get without it.
 services:
   nats:
     image: nats:2.11-alpine
@@ -19,15 +22,15 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: cerberus
-      POSTGRES_PASSWORD: cerberus
-      POSTGRES_DB: cerberus
+      POSTGRES_USER: ${POSTGRES_USER:-cerberus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cerberus}
+      POSTGRES_DB: ${POSTGRES_DB:-cerberus}
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cerberus -d cerberus"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-cerberus} -d $${POSTGRES_DB:-cerberus}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -63,7 +66,7 @@ services:
       - prometheus
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_USERS_DEFAULT_THEME: light

@@ -3,6 +3,13 @@
 # The infrastructure runs in compose; the engine runs on the host, so what you
 # are editing is what the dashboard is measuring.
 
+# .env, when present, is the source of truth for both compose and these
+# targets. Values are parsed literally: unquoted, no trailing comments.
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
 DATABASE_URL ?= postgres://cerberus:cerberus@localhost:5432/cerberus?sslmode=disable
 NATS_URL     ?= nats://localhost:4222
 CERBERUS_URL ?= http://localhost:8080

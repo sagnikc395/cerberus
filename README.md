@@ -170,7 +170,33 @@ Dashboard: `http://localhost:3000` (violations by check, per-check precision fro
 
 `make run-memory` runs the whole control plane with an in-process broker and an in-memory store, with no infrastructure at all. Nothing survives a restart, which is why it is for demos and tests.
 
-Set `ANTHROPIC_API_KEY` to enable the LLM judge behind the groundedness check; without it the check falls back to its lexical baseline rather than going silent.
+## Configuration
+
+Everything is configured by environment variable or flag, and nothing is required: with an empty environment the control plane runs in memory with no broker and no auth. Copy the annotated [`.env.example`](.env.example) to get started.
+
+```bash
+cp .env.example .env
+```
+
+Both `docker compose` and the Makefile read `.env`, so `docker compose up -d` and `make run` pick it up. Make parses the file literally, so write values unquoted with no trailing comments. The Go binaries do not read it themselves — run them through `make`, or `set -a; source .env; set +a` first.
+
+| Variable | Flag | Default | What it does |
+|---|---|---|---|
+| `CERBERUS_ADDR` | `--addr` | `:8080` | Address the HTTP API listens on |
+| `DATABASE_URL` | `--database-url` | _empty_ | Postgres for cerberus's tables and anchora's checkpoints. Empty runs in memory, with no durability |
+| `NATS_URL` | `--nats-url` | _empty_ | NATS with JetStream. Empty uses the in-process broker |
+| `CERBERUS_POLICY_DIR` | `--policies` | `policies` | Directory of policy files, loaded at startup |
+| `CERBERUS_TOKEN` | `--token` | _empty_ | Shared bearer token on `/v1`. Empty disables auth |
+| `CERBERUS_REVIEW_TIMEOUT` | `--review-timeout` | `24h` | When an undecided queue item is marked expired |
+| `CERBERUS_APP_VERSION` | — | `cerberus-dev` | Stamped on every workflow; gates recovery, so set it per build |
+| `CERBERUS_URL` | `--url` | `http://localhost:8080` | Control plane the CLI talks to |
+| `ANTHROPIC_API_KEY` | — | _empty_ | Enables the LLM judge behind groundedness. Without it the check falls back to its lexical baseline rather than going silent |
+| `CERBERUS_JUDGE_MODEL` | — | `claude-opus-5-5` | Judge model |
+| `CERBERUS_JUDGE_PRICE_IN` / `_OUT` | — | `4.00` / `20.00` | Per-million-token prices used to attribute cost per verdict. Change them with the model, or the spend panel will lie |
+| `POSTGRES_USER` / `_PASSWORD` / `_DB` | — | `cerberus` | Compose only; keep them in step with `DATABASE_URL` |
+| `GRAFANA_ADMIN_PASSWORD` | — | `admin` | Compose only. Grafana allows anonymous viewing, so this is for editing |
+
+A flag always beats the environment. `CERBERUS_APP_VERSION` is worth setting in a real deployment: an executor only recovers workflows it can run, so two builds with different check code must not claim each other's in-flight evaluations.
 
 ## Sending traffic
 
@@ -251,6 +277,7 @@ internal/api            HTTP surface
 policies/               shipped policies; candidates/ holds unactivated versions
 eval/datasets/          labeled cases, including known-gaps.jsonl
 deploy/                 prometheus scrape config, grafana datasource and dashboard
+.env.example            every environment variable, annotated
 ```
 
 ## Scope
