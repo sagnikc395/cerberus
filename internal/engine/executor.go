@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/sagnikc395/cerberus/internal/core"
@@ -247,6 +246,3 @@ func goroutineSpawner(ctx context.Context, _ string, t Task) Await {
 		}
 	}
 }
-
-// tierLabel is used in step names so a workflow's history reads clearly.
-func tierLabel(t core.Tier) string { return strconv.Itoa(int(t)) + ":" + t.String() }

@@ -32,6 +32,16 @@ services:
       timeout: 3s
       retries: 10
 
+  # NATS serves its own monitoring endpoints (/varz, /jsz) rather than Prometheus
+  # text, so the exporter translates them.
+  nats-exporter:
+    image: natsio/prometheus-nats-exporter:0.17.3
+    command: ["-varz", "-jsz=all", "-connz", "-routez", "http://nats:8222"]
+    depends_on:
+      - nats
+    ports:
+      - "7777:7777"
+
   prometheus:
     image: prom/prometheus:v3.1.0
     command:

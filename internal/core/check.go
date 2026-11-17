@@ -51,9 +51,6 @@ type Verdict struct {
 // Flagged reports whether the verdict says something was found.
 func (v Verdict) Flagged() bool { return v.Label != "" && v.Label != LabelOK }
 
-// OK is the verdict of a check that found nothing.
-func OK() Verdict { return Verdict{Label: LabelOK} }
-
 // Check is the one interface every guardrail implements. A check is pure with
 // respect to the event: same event, same verdict, so it can be replayed against
 // historical traffic during a policy dry run and scored by the eval harness.
