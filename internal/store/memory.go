@@ -19,7 +19,7 @@ type Memory struct {
 	order       []string
 	reviews     map[string]Review
 	reviewOrder []string
-	sessions    map[string]core.SessionState
+	sessions    map[[2]string]core.SessionState
 }
 
 // NewMemory returns an empty in-process store.
@@ -27,7 +27,7 @@ func NewMemory() *Memory {
 	return &Memory{
 		evaluations: map[string]Evaluation{},
 		reviews:     map[string]Review{},
-		sessions:    map[string]core.SessionState{},
+		sessions:    map[[2]string]core.SessionState{},
 	}
 }
 
@@ -148,7 +148,7 @@ func (m *Memory) AdvanceSession(_ context.Context, ev core.Event) (core.SessionS
 	if ev.SessionID == "" {
 		return ev.Session, nil
 	}
-	key := ev.AgentID + "/" + ev.SessionID
+	key := [2]string{ev.AgentID, ev.SessionID}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	stored, visible := fold(m.sessions[key], ev)

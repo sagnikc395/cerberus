@@ -39,13 +39,16 @@ func run() error {
 	var (
 		addr          = flag.String("addr", env("CERBERUS_ADDR", ":8080"), "address the HTTP API listens on")
 		databaseURL   = flag.String("database-url", os.Getenv("DATABASE_URL"), "Postgres URL; empty runs in memory (no durability)")
-		natsURL       = flag.String("nats-url", os.Getenv("NATS_URL"), "NATS URL; empty uses the in-process broker")
+		natsURL       = flag.String("nats-url", os.Getenv("NATS_URL"), "NATS URL; empty submits directly to Anchora")
 		policyDir     = flag.String("policies", env("CERBERUS_POLICY_DIR", "policies"), "directory of policy files")
 		token         = flag.String("token", os.Getenv("CERBERUS_TOKEN"), "bearer token required on /v1 routes; empty disables auth")
 		reviewTimeout = flag.String("review-timeout", env("CERBERUS_REVIEW_TIMEOUT", "24h"), "how long a parked event waits for a reviewer")
 		refresh       = flag.Duration("refresh", 15*time.Second, "how often queue depth and reviewer precision gauges are refreshed")
 	)
 	flag.Parse()
+	if *refresh <= 0 {
+		return errors.New("refresh must be positive")
+	}
 
 	logger := log.New(os.Stderr, "", log.LstdFlags|log.Lmsgprefix)
 	logf := func(format string, args ...any) { logger.Printf(format, args...) }
@@ -141,14 +144,10 @@ func run() error {
 		}
 		bus = nb
 		logf("broker: nats jetstream at %s", *natsURL)
-	} else {
-		bus = broker.NewInProc(4096)
-		logf("broker: in-process")
-	}
-	defer bus.Close()
-
-	if err := bus.Subscribe(ctx, eng.Handler()); err != nil {
-		return err
+		defer bus.Close()
+		if err := bus.Subscribe(ctx, eng.Handler()); err != nil {
+			return err
+		}
 	}
 
 	srv := &http.Server{
@@ -199,8 +198,10 @@ func refreshGauges(ctx context.Context, every time.Duration, bus broker.Broker, 
 			return
 		case <-ticker.C:
 		}
-		if depth, err := bus.Depth(ctx); err == nil && depth >= 0 {
-			m.QueueDepth.WithLabelValues(broker.Subject).Set(float64(depth))
+		if bus != nil {
+			if depth, err := bus.Depth(ctx); err == nil && depth >= 0 {
+				m.QueueDepth.WithLabelValues(broker.Subject).Set(float64(depth))
+			}
 		}
 		pending, err := s.ListReviews(ctx, store.ReviewFilter{State: store.ReviewPending, Limit: 10_000})
 		if err != nil {

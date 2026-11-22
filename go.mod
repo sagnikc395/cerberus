@@ -7,7 +7,7 @@ require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/nats-io/nats.go v1.55.0
 	github.com/prometheus/client_golang v1.25.0
-	github.com/sagnikc395/anchora v0.0.0-20261116230958-d1bf9070b694
+	github.com/sagnikc395/anchora v0.0.0-20261118065948-5288d5cdeeb6
 	gopkg.in/yaml.v3 v3.0.1
 )
 

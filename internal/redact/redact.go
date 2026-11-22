@@ -39,15 +39,19 @@ func Text(text string) (string, int) {
 	var b strings.Builder
 	b.Grow(len(text))
 	cursor, masked := 0, 0
-	for _, s := range spans {
-		if s.start < cursor { // overlapping detections: the first one wins
-			continue
+	for i := 0; i < len(spans); {
+		s := spans[i]
+		i++
+		for i < len(spans) && spans[i].start < s.end {
+			s.end = max(s.end, spans[i].end)
+			i++
 		}
 		b.WriteString(text[cursor:s.start])
 		b.WriteString(mask(s.label, s.end-s.start))
 		cursor = s.end
 		masked++
 	}
+
 	b.WriteString(text[cursor:])
 	return b.String(), masked
 }
@@ -70,64 +74,58 @@ func mask(label string, n int) string {
 	}
 }
 
-// Event returns a copy of ev with every text field redacted, and the total
-// number of values masked. The returned event is what the store and the
-// review queue see; the original never leaves the evaluation workflow.
+// Event masks detected sensitive values in event content and returns a copy
+// for evaluation and review records.
 func Event(ev core.Event) (core.Event, int) {
 	total := 0
 	out := ev
 
-	out.Prompt, total = addMask(ev.Prompt, total)
-	out.Completion, total = addMask(ev.Completion, total)
-
-	if len(ev.Context) > 0 {
-		out.Context = make([]core.Document, len(ev.Context))
-		copy(out.Context, ev.Context)
-		for i := range out.Context {
-			out.Context[i].Content, total = addMask(out.Context[i].Content, total)
+	redact := func(text string) string {
+		value, n := Text(text)
+		total += n
+		return value
+	}
+	out.Prompt = redact(ev.Prompt)
+	out.Completion = redact(ev.Completion)
+	out.Context = append([]core.Document(nil), ev.Context...)
+	for i := range out.Context {
+		out.Context[i].Source = redact(out.Context[i].Source)
+		out.Context[i].Content = redact(out.Context[i].Content)
+	}
+	if ev.Metadata != nil {
+		out.Metadata = make(map[string]string, len(ev.Metadata))
+		for key, value := range ev.Metadata {
+			out.Metadata[key] = redact(value)
 		}
 	}
 	if ev.ToolCall != nil {
 		call := *ev.ToolCall
-		if len(ev.ToolCall.Args) > 0 {
-			call.Args = make(map[string]any, len(ev.ToolCall.Args))
-			for k, v := range ev.ToolCall.Args {
-				if s, ok := v.(string); ok {
-					redacted, n := Text(s)
-					call.Args[k] = redacted
-					total += n
-					continue
-				}
-				call.Args[k] = v
-			}
-		}
+		call.Args = redactArgs(call.Args, redact)
 		out.ToolCall = &call
 	}
-	if len(ev.Session.RecentCalls) > 0 {
-		out.Session.RecentCalls = make([]core.ToolCall, len(ev.Session.RecentCalls))
-		for i, call := range ev.Session.RecentCalls {
-			redacted := call
-			if len(call.Args) > 0 {
-				redacted.Args = make(map[string]any, len(call.Args))
-				for k, v := range call.Args {
-					if s, ok := v.(string); ok {
-						masked, n := Text(s)
-						redacted.Args[k] = masked
-						total += n
-						continue
-					}
-					redacted.Args[k] = v
-				}
-			}
-			out.Session.RecentCalls[i] = redacted
-		}
+	out.Session.RecentCalls = append([]core.ToolCall(nil), ev.Session.RecentCalls...)
+	for i := range out.Session.RecentCalls {
+		call := &out.Session.RecentCalls[i]
+		call.Args = redactArgs(call.Args, redact)
 	}
 	return out, total
 }
 
-func addMask(text string, running int) (string, int) {
-	redacted, n := Text(text)
-	return redacted, running + n
+func redactValue(value any, redact func(string) string) any {
+	switch v := value.(type) {
+	case string:
+		return redact(v)
+	case map[string]any:
+		return redactArgs(v, redact)
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = redactValue(item, redact)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 // Results redacts the evidence text a check attached to its verdict. Checks
@@ -147,6 +145,17 @@ func Results(results []core.Result) []core.Result {
 			spans[j].Note, _ = Text(spans[j].Note)
 		}
 		out[i].Verdict.Evidence = spans
+	}
+	return out
+}
+
+func redactArgs(args map[string]any, redact func(string) string) map[string]any {
+	if args == nil {
+		return nil
+	}
+	out := make(map[string]any, len(args))
+	for key, item := range args {
+		out[key] = redactValue(item, redact)
 	}
 	return out
 }

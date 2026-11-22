@@ -12,8 +12,8 @@ import (
 	"github.com/sagnikc395/anchora/anchora"
 	anchoramem "github.com/sagnikc395/anchora/anchora/memory"
 
+	"github.com/sagnikc395/cerberus/client"
 	"github.com/sagnikc395/cerberus/internal/api"
-	"github.com/sagnikc395/cerberus/internal/broker"
 	"github.com/sagnikc395/cerberus/internal/core"
 	"github.com/sagnikc395/cerberus/internal/engine"
 	"github.com/sagnikc395/cerberus/internal/policy"
@@ -67,12 +67,8 @@ func newServer(t *testing.T) (*httptest.Server, *store.Memory) {
 	if err := durable.Launch(); err != nil {
 		t.Fatal(err)
 	}
-	bus := broker.NewInProc(64)
-	if err := bus.Subscribe(ctx, eng.Handler()); err != nil {
-		t.Fatal(err)
-	}
 	srv := httptest.NewServer(api.New(api.Config{
-		Engine: eng, Broker: bus, Store: memory, Policies: set, Registry: registry, Token: "secret",
+		Engine: eng, Store: memory, Policies: set, Registry: registry, Token: "secret",
 	}).Handler())
 	t.Cleanup(srv.Close)
 	return srv, memory
@@ -211,5 +207,42 @@ func TestReviewDecisionNeedsAReviewerAndAKnownLabel(t *testing.T) {
 	resp, _ = post(t, srv.URL+"/v1/reviews/review:1/decision", "secret", map[string]any{"state": "rejected", "reviewer": "other"})
 	if resp.StatusCode == http.StatusOK {
 		t.Error("the queue item was decided twice")
+	}
+}
+
+func TestSynchronousHoldReturnsBeforeReview(t *testing.T) {
+	srv, memory := newServer(t)
+	c := client.New(srv.URL, client.WithToken("secret"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, err := c.Check(ctx, client.Event{
+		AgentID: "refund-agent", Kind: client.KindCompletion,
+		Completion: "Account email is dana.reyes@example.com.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Blocked() || out.ReviewState != string(store.ReviewPending) {
+		t.Fatalf("expected pending hold, got %+v", out)
+	}
+	if _, err := memory.Review(ctx, out.ReviewID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIngestRetryWithoutTimestampKeepsEventID(t *testing.T) {
+	srv, _ := newServer(t)
+	c := client.New(srv.URL, client.WithToken("secret"))
+	ev := client.Event{AgentID: "refund-agent", Kind: client.KindPrompt, Prompt: "hello"}
+	first, err := c.Report(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.Report(context.Background(), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == "" || first != second {
+		t.Fatalf("retry changed event ID from %q to %q", first, second)
 	}
 }

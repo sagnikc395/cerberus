@@ -11,7 +11,6 @@ export
 endif
 
 DATABASE_URL ?= postgres://cerberus:cerberus@localhost:5432/cerberus?sslmode=disable
-NATS_URL     ?= nats://localhost:4222
 CERBERUS_URL ?= http://localhost:8080
 GO           ?= go
 
@@ -33,12 +32,12 @@ clean-infra: ## stop the infrastructure and delete its data
 	docker compose down -v
 
 .PHONY: run
-run: ## run the engine and workers against the compose infrastructure
-	DATABASE_URL="$(DATABASE_URL)" NATS_URL="$(NATS_URL)" $(GO) run ./cmd/cerberus
+run: ## run locally, using configured services when set
+	$(GO) run ./cmd/cerberus
 
 .PHONY: run-memory
-run-memory: ## run with no infrastructure at all: in-memory store and broker
-	$(GO) run ./cmd/cerberus
+run-memory: ## run with no infrastructure at all: in-memory store and workflow engine
+	DATABASE_URL= NATS_URL= $(GO) run ./cmd/cerberus
 
 .PHONY: demo
 demo: ## send sample agent traffic, including risky tool calls

@@ -106,8 +106,8 @@ func (j *ClaudeJudge) Judge(ctx context.Context, completion string, docs []core.
 }
 
 type judgement struct {
-	UnsupportedScore float64 `json:"unsupported_score"`
-	Rationale        string  `json:"rationale"`
+	UnsupportedScore *float64 `json:"unsupported_score"`
+	Rationale        string   `json:"rationale"`
 }
 
 // parseJudgement is tolerant of a model that wraps its JSON in a fence or a
@@ -122,10 +122,10 @@ func parseJudgement(s string) (float64, string, error) {
 	if err := json.Unmarshal([]byte(s[start:end+1]), &j); err != nil {
 		return 0, "", fmt.Errorf("judge returned invalid JSON: %w", err)
 	}
-	if j.UnsupportedScore < 0 || j.UnsupportedScore > 1 {
-		return 0, "", fmt.Errorf("judge returned score %v outside 0..1", j.UnsupportedScore)
+	if j.UnsupportedScore == nil || *j.UnsupportedScore < 0 || *j.UnsupportedScore > 1 {
+		return 0, "", fmt.Errorf("judge must return an unsupported_score between 0 and 1")
 	}
-	return j.UnsupportedScore, j.Rationale, nil
+	return *j.UnsupportedScore, j.Rationale, nil
 }
 
 func envFloat(name string, def float64) float64 {

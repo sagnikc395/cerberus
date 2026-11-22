@@ -149,6 +149,9 @@ func (c *Client) send(ctx context.Context, ev Event, wait bool) (Decision, error
 	if err := json.Unmarshal(payload, &out); err != nil {
 		return Decision{}, err
 	}
+	if wait && out.Outcome == nil {
+		return Decision{}, fmt.Errorf("cerberus: missing decision for event %s", out.EventID)
+	}
 	if out.Outcome != nil {
 		out.Outcome.EventID = out.EventID
 		return *out.Outcome, nil

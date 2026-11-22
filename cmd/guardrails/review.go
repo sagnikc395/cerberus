@@ -65,7 +65,7 @@ func firstEvidence(spans []core.Span) string {
 		note = spans[0].Text
 	}
 	if len(note) > 90 {
-		note = note[:90] + "…"
+		note = note[:90] + "..."
 	}
 	return note
 }

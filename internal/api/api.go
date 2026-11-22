@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -117,6 +118,11 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "malformed event: "+err.Error())
 		return
 	}
+	if dec.Decode(new(json.RawMessage)) != io.EOF {
+		s.rejected("malformed_json")
+		writeError(w, http.StatusBadRequest, "expected one JSON event")
+		return
+	}
 	ev, err := normalize(req.Event)
 	if err != nil {
 		s.rejected("invalid_event")
@@ -130,7 +136,7 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 	if req.Wait {
 		// The agent is holding its turn for the verdict, so evaluation runs on
 		// this request rather than through the broker.
-		outcome, err := s.cfg.Engine.Evaluate(r.Context(), ev)
+		outcome, err := s.cfg.Engine.AwaitDecision(r.Context(), ev)
 		if err != nil {
 			s.cfg.Logf("evaluate %s: %v", ev.ID, err)
 			writeError(w, http.StatusInternalServerError, "evaluation failed")
@@ -139,13 +145,21 @@ func (s *Server) ingest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ingestResponse{EventID: ev.ID, Accepted: true, Outcome: &outcome})
 		return
 	}
-	if err := s.cfg.Broker.Publish(r.Context(), ev); err != nil {
-		s.rejected("broker_unavailable")
+	if err := s.submit(r.Context(), ev); err != nil {
+		s.rejected("submit_unavailable")
 		s.cfg.Logf("publish %s: %v", ev.ID, err)
-		writeError(w, http.StatusServiceUnavailable, "broker unavailable")
+		writeError(w, http.StatusServiceUnavailable, "event submission unavailable")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, ingestResponse{EventID: ev.ID, Accepted: true})
+}
+
+func (s *Server) submit(ctx context.Context, ev core.Event) error {
+	if s.cfg.Broker != nil {
+		return s.cfg.Broker.Publish(ctx, ev)
+	}
+	_, err := s.cfg.Engine.Start(ctx, ev)
+	return err
 }
 
 // normalize validates an incoming event and fills in what the agent left out.
@@ -166,27 +180,20 @@ func normalize(ev core.Event) (core.Event, error) {
 	if ev.Kind == core.KindToolCall && ev.ToolCall == nil {
 		return ev, errors.New("a tool_call event needs a tool_call")
 	}
+	ev.Session = core.SessionState{}
+	if ev.ID == "" {
+		// JSON frames the fields and sorts map keys for a stable hash.
+		payload, err := json.Marshal(ev)
+		if err != nil {
+			return ev, err
+		}
+		hash := sha256.Sum256(payload)
+		ev.ID = "ev_" + hex.EncodeToString(hash[:12])
+	}
 	if ev.CreatedAt.IsZero() {
 		ev.CreatedAt = time.Now().UTC()
 	}
-	if ev.ID == "" {
-		ev.ID = contentID(ev)
-	}
 	return ev, nil
-}
-
-func contentID(ev core.Event) string {
-	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|%s|%d|", ev.AgentID, ev.SessionID, ev.Kind, ev.CreatedAt.UnixNano())
-	h.Write([]byte(ev.Prompt))
-	h.Write([]byte(ev.Completion))
-	for _, d := range ev.Context {
-		fmt.Fprintf(h, "|%s|%s", d.Source, d.Content)
-	}
-	if ev.ToolCall != nil {
-		fmt.Fprintf(h, "|%s|%s", ev.ToolCall.Name, core.EncodeArgs(ev.ToolCall.Args))
-	}
-	return "ev_" + hex.EncodeToString(h.Sum(nil))[:24]
 }
 
 func (s *Server) rejected(reason string) {
@@ -368,6 +375,14 @@ func (s *Server) labelStats(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	if s.cfg.Broker == nil {
+		if _, err := s.cfg.Store.ListEvaluations(ctx, store.EventFilter{Limit: 1}); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "store unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
 	depth, err := s.cfg.Broker.Depth(ctx)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "degraded", "broker_error": err.Error()})

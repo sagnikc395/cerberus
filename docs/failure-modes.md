@@ -151,6 +151,9 @@ Experimental, and labeled as such in its version string.
   detector whose code changes between the crash and the recovery is caught by
   anchora's nondeterminism check rather than silently mixing versions; the
   workflow fails loudly and the event is re-evaluated under the new app version.
-- **The in-process broker has no durability.** It exists for `make demo` and
-  the tests. Without `NATS_URL` and `DATABASE_URL`, an event accepted at ingest
-  is lost on restart.
+- **Memory mode loses state on restart.** Configure `DATABASE_URL` for durable
+  workflow state and stored decisions. JetStream is optional for asynchronous
+  ingress.
+- **Session rollups and workflow checkpoints commit separately.** A crash
+  after the rollup commits and before its checkpoint can count that event
+  again during recovery.

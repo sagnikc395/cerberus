@@ -39,7 +39,7 @@ func TestScanFindsProviderKeysAndSkipsPlaceholders(t *testing.T) {
 func TestMaskKeepsTheShapeAndNotTheValue(t *testing.T) {
 	m := Match{Rule: "github_token", Value: "ghp_abcdefghijklmnopqrstuvwxyz0123456789"}
 	got := Mask(m)
-	if got != "github_token (40 chars, ends …6789)" {
+	if got != "github_token (40 chars, ends ...6789)" {
 		t.Errorf("Mask = %q", got)
 	}
 }

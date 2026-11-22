@@ -33,12 +33,12 @@ func TestEventRedactsEveryTextCarrier(t *testing.T) {
 		Context:    []core.Document{{Source: "kb", Content: "customer ssn 123-45-6789"}},
 		ToolCall: &core.ToolCall{
 			Name: "send_email",
-			Args: map[string]any{"to": "ops-team", "body": "card 4111-1111-1111-1111", "retries": 2},
+			Args: map[string]any{"to": "ops-team", "body": "card 4111-1111-1111-1111", "retries": 2, "nested": []any{"nested@example.com"}},
 		},
 	}
 	out, n := Event(ev)
-	if n != 4 {
-		t.Errorf("masked %d values, want 4", n)
+	if n != 5 {
+		t.Errorf("masked %d values, want 5", n)
 	}
 	if strings.Contains(out.Prompt, "dana.reyes@example.com") {
 		t.Error("prompt was not redacted")
@@ -51,6 +51,9 @@ func TestEventRedactsEveryTextCarrier(t *testing.T) {
 	}
 	if body := out.ToolCall.Args["body"].(string); strings.Contains(body, "4111-1111-1111-1111") {
 		t.Error("tool arguments were not redacted")
+	}
+	if nested := out.ToolCall.Args["nested"].([]any)[0]; nested == "nested@example.com" {
+		t.Error("nested argument was not redacted")
 	}
 	if out.ToolCall.Args["retries"] != 2 {
 		t.Error("a non-string argument was altered")

@@ -153,13 +153,54 @@ func (e *Engine) Evaluate(ctx context.Context, ev core.Event) (Outcome, error) {
 	return h.Result(ctx)
 }
 
+// AwaitDecision returns as soon as the policy decision is available, including
+// the review record for a held event. The workflow continues independently.
+func (e *Engine) AwaitDecision(ctx context.Context, ev core.Event) (Outcome, error) {
+	h, err := e.Start(ctx, ev)
+	if err != nil {
+		return Outcome{}, err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		out Outcome
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := h.Result(ctx)
+		done <- result{out, err}
+	}()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		review, err := e.cfg.Store.Review(ctx, "review:"+ev.ID)
+		if err == nil {
+			return Outcome{
+				EventID: ev.ID, Action: review.Action, Severity: review.Severity,
+				Violations: len(review.Violations), ReviewID: review.ID,
+				ReviewState: review.State, Reviewer: review.Reviewer,
+			}, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return Outcome{}, err
+		}
+		select {
+		case r := <-done:
+			return r.out, r.err
+		case <-ctx.Done():
+			return Outcome{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // evaluate is the workflow. Every engine call it makes is checkpointed, so the
 // comments below describe what survives a crash at each point.
 func (e *Engine) evaluate(ctx *anchora.Context, ev core.Event) (Outcome, error) {
 	started := time.Now()
 
-	// The session rollup is advanced exactly once per event: it is a write,
-	// and a replay must not count the same tokens twice.
+	// A completed checkpoint carries the session rollup across replay.
 	session, err := anchora.Step(ctx, "advance_session", func(sc anchora.StepCtx) (core.SessionState, error) {
 		return e.cfg.Store.AdvanceSession(sc, ev)
 	}, anchora.Retry(5, 200*time.Millisecond, 2), anchora.Timeout(10*time.Second))
@@ -178,7 +219,7 @@ func (e *Engine) evaluate(ctx *anchora.Context, ev core.Event) (Outcome, error) 
 		}, anchora.Retry(2, 100*time.Millisecond, 2), anchora.Timeout(45*time.Second))
 		return func(c context.Context) (core.Result, error) { return future.Wait(c) }
 	}
-	results := executor.Run(workflowContext{ctx}, plan, ev)
+	results := redact.Results(executor.Run(workflowContext{ctx}, plan, ev))
 
 	active, _ := e.cfg.Policies.Active(ev.AgentID)
 	decision := policy.Decision{Action: policy.ActionAllow}
@@ -201,10 +242,8 @@ func (e *Engine) evaluate(ctx *anchora.Context, ev core.Event) (Outcome, error) 
 		}
 	}
 
-	// Redaction happens before the store write, inside the workflow, so the
-	// raw event exists only in memory during evaluation.
+	// Redact the event before writing the evaluation and review records.
 	redacted, masked := redact.Event(ev)
-	safeResults := redact.Results(results)
 
 	evaluation := store.Evaluation{
 		EventID:    ev.ID,
@@ -214,7 +253,7 @@ func (e *Engine) evaluate(ctx *anchora.Context, ev core.Event) (Outcome, error) 
 		ReceivedAt: ev.CreatedAt,
 		DecidedAt:  time.Now().UTC(),
 		Event:      redacted,
-		Results:    safeResults,
+		Results:    results,
 		Decision:   decision,
 		Masked:     masked,
 		Latency:    time.Since(started),
@@ -275,7 +314,6 @@ func (e *Engine) evaluate(ctx *anchora.Context, ev core.Event) (Outcome, error) 
 // checkpointed step and each gap is a durable timer, so the wait survives a
 // restart of every process involved without losing its place.
 func (e *Engine) waitForReview(ctx *anchora.Context, reviewID string) (store.Review, error) {
-	deadline := time.Now().Add(e.cfg.ReviewTimeout)
 	for attempt := 0; ; attempt++ {
 		review, err := anchora.Step(ctx, "poll_review", func(sc anchora.StepCtx) (store.Review, error) {
 			return e.cfg.Store.Review(sc, reviewID)
@@ -290,7 +328,8 @@ func (e *Engine) waitForReview(ctx *anchora.Context, reviewID string) (store.Rev
 		if err != nil {
 			return store.Review{}, err
 		}
-		if now.After(deadline) {
+		remaining := review.CreatedAt.Add(e.cfg.ReviewTimeout).Sub(now)
+		if remaining <= 0 {
 			// Nobody came. The strictest action already applied; the queue item
 			// is marked so it stops showing up as waiting work.
 			expired, err := anchora.Step(ctx, "expire_review", func(sc anchora.StepCtx) (store.Review, error) {
@@ -313,7 +352,7 @@ func (e *Engine) waitForReview(ctx *anchora.Context, reviewID string) (store.Rev
 			}
 			return expired, nil
 		}
-		if err := anchora.Sleep(ctx, e.pollInterval(attempt)); err != nil {
+		if err := anchora.Sleep(ctx, min(remaining, e.pollInterval(attempt))); err != nil {
 			return store.Review{}, err
 		}
 	}
@@ -323,18 +362,7 @@ func (e *Engine) waitForReview(ctx *anchora.Context, reviewID string) (store.Rev
 // answered in seconds, and an item that sits overnight is not polled all
 // night at the same rate.
 func (e *Engine) pollInterval(attempt int) time.Duration {
-	d := e.cfg.ReviewPoll << min(attempt, 6)
-	if max := 2 * time.Minute; d > max {
-		return max
-	}
-	return d
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return min(2*time.Minute, min(e.cfg.ReviewPoll, 2*time.Minute)<<min(attempt, 6))
 }
 
 // workflowContext adapts a workflow's cancellation to context.Context. The

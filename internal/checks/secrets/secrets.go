@@ -53,7 +53,7 @@ func Mask(m Match) string {
 	if len(tail) > 4 {
 		tail = tail[len(tail)-4:]
 	}
-	return m.Rule + " (" + itoa(len(m.Value)) + " chars, ends …" + tail + ")"
+	return m.Rule + " (" + itoa(len(m.Value)) + " chars, ends ..." + tail + ")"
 }
 
 func itoa(n int) string {

@@ -293,13 +293,18 @@ func (s *Postgres) AdvanceSession(ctx context.Context, ev core.Event) (core.Sess
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Serialize the first write as well as updates to an existing session.
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtext($1), hashtext($2))`, ev.AgentID, ev.SessionID); err != nil {
+		return core.SessionState{}, err
+	}
+
 	var (
 		state core.SessionState
 		calls []byte
 	)
 	err = tx.QueryRow(ctx, `
 		select started_at, turn_count, tokens_spent, cost_usd, recent_calls
-		from cerberus.sessions where agent = $1 and session_id = $2 for update`,
+		from cerberus.sessions where agent = $1 and session_id = $2`,
 		ev.AgentID, ev.SessionID).Scan(&state.StartedAt, &state.TurnCount, &state.TokensSpent, &state.CostSpentUSD, &calls)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
