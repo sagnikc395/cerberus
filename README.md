@@ -1,4 +1,7 @@
-# Cerberus
+# cerberus
+
+![cerberus logo](./assets/cerberus_logo.png)
+
 
 A central control plane for monitoring AI agents and running guardrail checks on their traffic. Agents send events; the engine evaluates them with pluggable checks, applies per-agent policies, routes risky cases to human review, and reports measured accuracy for every check.
 
